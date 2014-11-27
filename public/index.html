@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<style>
+
+html, body {
+	min-height: 100%;
+}
+
+body {
+	padding: 0;
+	margin: 0;
+	font: 14px "Helvetica Neue", Helvetica, Arial, sans-serif;
+	background: url(/background.jpg);
+	background-size: cover;
+	background-position: center;
+	background-repeat: no-repeat;
+	/* override this anywhere text might be selected/copied, like dialogs */
+	-webkit-user-select: none;
+	user-select: none;
+	cursor: default;
+}
+
+.window {
+	position: fixed;
+	padding-top: 20px;
+	box-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+	border-radius: 5px 5px 0 0;
+	background: white;
+	box-sizing: border-box;
+}
+
+.window > .titleBar {
+	position: absolute;
+	height: 20px;
+	line-height: 20px;
+	width: 100%;
+	top: 0;
+	left: 0;
+	background: linear-gradient(#eee, #ccc);
+	border-radius: 5px 5px 0 0;
+	box-shadow: inset 0 1px 0 white;
+	padding: 3px 6px;
+	box-sizing: border-box;
+}
+
+.window > .resizeThumb {
+	position: absolute;
+	width: 14px;
+	height: 14px;
+	bottom: -4px;
+	right: -4px;
+	cursor: nwse-resize;
+	border-radius: 7px;
+}
+
+.closeButton {
+	background: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDEwMCAxMDAiPgoJPGxpbmUgeDE9IjMwIiB5MT0iMzAiIHgyPSI3MCIgeTI9IjcwIiBzdHJva2U9ImJsYWNrIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS13aWR0aD0iOCIgLz4KCTxsaW5lIHgxPSI3MCIgeTE9IjMwIiB4Mj0iMzAiIHkyPSI3MCIgc3Ryb2tlPSJibGFjayIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2Utd2lkdGg9IjgiIC8+Cjwvc3ZnPgo=);
+	background-repeat: no-repeat;
+	border: none;
+	width: 15px;
+	height: 15px;
+	padding: 0;
+	outline: none;
+	border-radius: 15px;
+}
+.closeButton:hover {
+	background-color: rgba(0, 0, 0, 0.2);
+}
+
+.window > iframe {
+	margin: 0;
+	border: 0;
+	width: 100%;
+	height: 100%;
+}
+
+#menuBar {
+	position: fixed;
+	left: 0;
+	right: 0;
+	background: rgba(240, 240, 240, 1);
+	box-shadow: 0 0 10px rgba(0, 0, 0, 0.4);
+	padding: 0 0.5em;
+	z-index: 1000001;
+}
+
+#mainMenu {
+	margin: 0;
+	list-style: none;
+	padding: 0;
+	display: flex;
+}
+
+#mainMenu > li {
+	padding: 0.3em 0.8em;
+	position: relative;
+}
+
+.menuItem.important > .title {
+	font-weight: bold;
+}
+
+.menuItem.selected > .title {
+	color: white;
+}
+
+.menuItem.selected {
+	background: rgb(0, 110, 255);
+}
+
+.menuItem:not(.selected) > .menu {
+	display: none;
+}
+
+.menu {
+	position: absolute;
+	background: rgb(240, 240, 240);
+	list-style: none;
+	padding: 0.2em 0;
+	top: 100%;
+	left: 0;
+	border-top: 1px solid #ccc;
+	border-radius: 0 0 0.4em 0.4em;
+	box-shadow: 0 0 5px rgba(0, 0, 0, 0.4);
+	/* clip the top of the shadow, but still, ew */
+	clip: rect(0, 10000px, 10000px, -10000px);
+}
+
+.menu > li {
+	padding: 0.2em 1em;
+}
+
+.menu > li:hover {
+	background: rgb(0, 110, 255);
+}
+
+#screenCover {
+	position: fixed;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	z-index: 1000000;
+}
+
+#screenCover:not(.visible) {
+	display: none;
+}
+
+</style>
+<div id=windows></div>
+<div id=screenCover></div>
+<div id=menuBar></div>
+<script>
+
+// As far as I can tell this is the only way to find the iframe who owns a contentWindow
+function findIframe(contentWindow) {
+	var iframes = document.getElementsByTagName('iframe');
+	for (var i = 0; i < iframes.length; i++) {
+		if (iframes[i].contentWindow === contentWindow) {
+			return iframes[i];
+		}
+	}
+}
+
+// Covers the screen during UI interaction so that mouse events aren't
+// swallowed by iframes
+var screenCover = {
+	el: document.getElementById('screenCover'),
+	show: function() { this.el.classList.add('visible'); },
+	hide: function() { this.el.classList.remove('visible'); }
+}
+
+function MenuItem() {
+	this.el = document.createElement('li');
+	this.el.exMenuItem = this;
+	this.els = {
+		title: document.createElement('span')
+	}
+	this.el.classList.add('menuItem');
+	this.els.title.classList.add('title');
+	this.el.appendChild(this.els.title);
+	this._menu = null;
+}
+
+MenuItem.prototype = {
+	get title() {
+		return this.els.title.textContent;
+	},
+	set title(val) {
+		this.els.title.textContent = val;
+	},
+	get important() {
+		return this.el.classList.contains('important');
+	},
+	set important(val) {
+		this.el.classList[val ? 'add' : 'remove']('important');
+	},
+	get selected() {
+		return this.el.classList.contains('selected');
+	},
+	set selected(val) {
+		this.el.classList[val ? 'add' : 'remove']('selected');
+	},
+	get menu() {
+		return this._menu;
+	},
+	set menu(val) {
+		if (this._menu) {
+			this.el.removeChild(this._menu.el);
+		}
+		if (val) {
+			this.el.appendChild(val.el);
+		}
+		this._menu = val;
+	},
+	activate: function() {
+		if (!this.onactivate) { return; }
+		this.onactivate(this);
+	}
+};
+
+function MenuBar() {
+	this.el = document.createElement('ul');
+	this.items = [];
+	this.selection = [];
+
+	this.mousemoveListener = this.track.bind(this);
+	this.mouseupListener = function(e) {
+		if (new Date - this.trackingStart < 200) {
+			return;
+		}
+		this.tracking = false;
+	}.bind(this);
+}
+
+MenuBar.prototype = {
+	addItem: function(item) {
+		this.items.push(item);
+		this.el.appendChild(item.el);
+		// Save and unbind me when removing a menu item
+		item.el.addEventListener('mousedown', function(e) {
+			e.preventDefault();
+			if (this.tracking = !this.tracking) {
+				this.track(e);
+			}
+		}.bind(this));
+	},
+	pushSelection: function(item) {
+		item.selected = true;
+		this.selection.push(item);
+	},
+	popSelection: function() {
+		var item = this.selection.pop();
+		item.selected = false;
+		return item;
+	},
+	get tracking() { return this._tracking; },
+	set tracking(val) {
+		if (val && !this._tracking) {
+			window.addEventListener('mousemove', this.mousemoveListener);
+			window.addEventListener('mouseup', this.mouseupListener);
+			screenCover.show();
+			this.trackingStart = +new Date;
+		} else if (!val && this._tracking) {
+			window.removeEventListener('mousemove', this.mousemoveListener);
+			window.removeEventListener('mouseup', this.mouseupListener);
+			if (this.selection.length) {
+				this.selection[this.selection.length-1].activate();
+			}
+			while (this.selection.length) { this.popSelection(); }
+			screenCover.hide();
+			delete this.trackingStart;
+		}
+		this._tracking = val;
+	},
+	menuItemFromEvent: function(e) {
+		var el = document.elementFromPoint(e.x, e.y);
+		if (!this.el.contains(el)) { return; }
+		while (el && !el.exMenuItem) { el = el.parentElement; }
+		return el && el.exMenuItem;
+	},
+	track: function(e) {
+		var menuItem = this.menuItemFromEvent(e);
+		if (!menuItem) {
+			if (this.selection.length
+				&& !this.selection[this.selection.length-1].menu
+			) { this.popSelection(); }
+			return;
+		}
+		while (this.selection.length
+			&& !this.selection[this.selection.length-1].el.contains(menuItem.el)
+		) { this.popSelection(); }
+		this.pushSelection(menuItem);
+	}
+};
+
+function Menu() {
+	this.el = document.createElement('ul');
+	this.el.classList.add('menu');
+	this.items = [];
+}
+
+Menu.prototype = {
+	addItem: function(item) {
+		this.items.push(item);
+		this.el.appendChild(item.el);
+	}
+};
+
+function Window() {
+	this.el = document.createElement('div');
+	this.els = {
+		titleBar: document.createElement('div'),
+		closeButton: document.createElement('button'),
+		iframe: document.createElement('iframe'),
+		resizeThumb: document.createElement('div')
+	};
+	this.el.classList.add('window');
+	this.els.titleBar.classList.add('titleBar');
+	this.els.closeButton.classList.add('closeButton');
+	this.els.resizeThumb.classList.add('resizeThumb');
+	this.els.titleBar.appendChild(this.els.closeButton);
+	this.el.appendChild(this.els.titleBar);
+	this.el.appendChild(this.els.iframe);
+	this.el.appendChild(this.els.resizeThumb);
+
+	this.els.closeButton.addEventListener('click', function() {
+		this.windowManager.removeWindow(this);
+	}.bind(this));
+
+	this.dragListener = this.trackDrag.bind(this);
+	this.dragMouseupListener = function(e) {
+		this.dragging = false;
+	}.bind(this);
+
+	this.resizeListener = this.trackResize.bind(this);
+	this.resizeMouseupListener = function(e) {
+		this.resizing = false;
+	}.bind(this);
+
+	this.els.titleBar.addEventListener('mousedown', function(e) {
+		if (e.button != 0) { return; }
+		if (e.target.tagName === 'BUTTON') { return; }
+		e.preventDefault();
+		this.orderFront();
+		this.dragging = true;
+		this.trackOffset = {
+			x: e.pageX - this.position.x,
+			y: e.pageY - this.position.y
+		};
+		this.trackDrag(e);
+	}.bind(this));
+
+	this.els.resizeThumb.addEventListener('mousedown', function(e) {
+		if (e.button != 0) { return; }
+		e.preventDefault();
+		this.orderFront();
+		this.resizing = true;
+		this.trackOffset = {
+			x: e.pageX - (this.position.x + this.size.width),
+			y: e.pageY - (this.position.y + this.size.height)
+		};
+		this.trackResize(e);
+	}.bind(this));
+
+	this.drawTracking = function(){
+		this.setPosition(this.trackX, this.trackY);
+		this.trackAF = null;
+	}.bind(this);
+
+	this.drawResizing = function(){
+		this.setSize(this.trackWidth, this.trackHeight);
+		this.trackAF = null;
+	}.bind(this);
+
+	// TODO: cascade
+	this.setPosition(50, 50);
+	this.setSize(600, 500);
+}
+
+Window.prototype = {
+	get src() { return this.els.iframe.src; },
+	set src(val) { this.els.iframe.src = val; },
+	get dragging() { return this._dragging; },
+	set dragging(val) {
+		if (val && !this._dragging) {
+			window.addEventListener('mousemove', this.dragListener);
+			window.addEventListener('mouseup', this.dragMouseupListener);
+			screenCover.show();
+		} else if (!val && this._dragging) {
+			window.removeEventListener('mousemove', this.dragListener);
+			window.removeEventListener('mouseup', this.dragMouseupListener);
+			delete this.trackAF;
+			delete this.trackOffset;
+			screenCover.hide();
+		}
+		this._dragging = val;
+	},
+	get resizing() { return this._resizing; },
+	set resizing(val) {
+		if (val && !this._resizing) {
+			window.addEventListener('mousemove', this.resizeListener);
+			window.addEventListener('mouseup', this.resizeMouseupListener);
+			screenCover.show();
+		} else if (!val && this._resizing) {
+			window.removeEventListener('mousemove', this.resizeListener);
+			window.removeEventListener('mouseup', this.resizeMouseupListener);
+			delete this.trackAF;
+			delete this.trackOffset;
+			screenCover.hide();
+		}
+		this._resizing = val;
+	},
+	setPosition: function(x, y) {
+		this.position = { x: x, y: y };
+		this.el.style.transform = 'translate3d(' + x + 'px,' + y + 'px, 0)';
+	},
+	setSize: function(width, height) {
+		this.size = { width: width, height: height };
+		this.el.style.width = width + 'px';
+		this.el.style.height = height + 'px';
+	},
+	trackDrag: function(e) {
+		this.trackX = e.pageX - this.trackOffset.x;
+		this.trackY = e.pageY - this.trackOffset.y;
+		if (!this.trackAF) {
+			this.trackAF = requestAnimationFrame(this.drawTracking);
+		}
+	},
+	trackResize: function(e) {
+		this.trackWidth = e.pageX - this.position.x - this.trackOffset.x;
+		this.trackHeight = e.pageY - this.position.y - this.trackOffset.y;
+		if (!this.trackAF) {
+			this.trackAF = requestAnimationFrame(this.drawResizing);
+		}
+	},
+	orderFront: function() {
+		this.windowManager.orderFront(this);
+	}
+};
+
+function WindowManager(el) {
+	this.el = el;
+	this.windows = [];
+}
+
+WindowManager.prototype = {
+	addWindow: function(w) {
+		this.windows.push(w);
+		w.windowManager = this;
+		this.el.appendChild(w.el);
+	},
+	removeWindow: function(w) {
+		var index = this.windows.indexOf(w);
+		if (index === -1) { return; }
+		this.windows.splice(index, 1);
+		this.el.removeChild(w.el);
+	},
+	orderFront: function(w) {
+		var index = this.windows.indexOf(w);
+		if (index === -1) { return; }
+		this.windows.splice(index, 1);
+		this.windows.push(w);
+		this.windows.forEach(function(w, i) {
+			w.el.style.zIndex = 1000 + i;
+		});
+	}
+};
+
+function Home() {
+	var terminalMenuItem = new MenuItem;
+	terminalMenuItem.title = "Terminal";
+	terminalMenuItem.onactivate = function(){
+		this.spawn('//terminal.localhub:4000');
+	}.bind(this);
+
+	var launchMenuItem = new MenuItem;
+	launchMenuItem.title = 'Launch';
+	launchMenuItem.important = true;
+
+	var launchMenu = new Menu;
+	launchMenuItem.menu = launchMenu;
+	launchMenu.addItem(terminalMenuItem);
+
+	this.menuBar = new MenuBar;
+	this.menuBar.addItem(launchMenuItem);
+	this.menuBar.el.id = 'mainMenu';
+	menuBar.appendChild(this.menuBar.el);
+
+	this.windowManager = new WindowManager(document.getElementById('windows'));
+
+	document.addEventListener('keydown', function(e) {
+		this.justBlurred = null;
+	}.bind(this));
+
+	document.addEventListener('keyup', function(e) {
+		if (this.justBlurred) {
+			this.justBlurred.focus();
+		}
+	}.bind(this));
+
+	window.addEventListener('message', function(e) {
+		if (e.data === 'escape') {
+			findIframe((this.justBlurred = e.source)).blur();
+		}
+	}.bind(this));
+}
+
+Home.prototype = {
+	spawn: function(url) {
+		var w = new Window;
+		w.src = url;
+		this.windowManager.addWindow(w);
+	}
+}
+
+var home = new Home;
+</script>
