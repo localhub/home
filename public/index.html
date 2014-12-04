@@ -42,14 +42,76 @@ body {
 	box-sizing: border-box;
 }
 
-.window > .resizeThumb {
+.window > .resizeTop {
+	top: -5px;
+	left: 0;
+	right: 0;
+	height: 10px;
+	position: absolute;
+	cursor: ns-resize;
+}
+
+.window > .resizeRight {
+	top: 0;
+	right: -5px;
+	bottom: 0;
+	width: 10px;
+	position: absolute;
+	cursor: ew-resize;
+}
+
+.window > .resizeBottom {
+	bottom: -5px;
+	left: 0;
+	right: 0;
+	height: 10px;
+	position: absolute;
+	cursor: ns-resize;
+}
+
+.window > .resizeLeft {
+	top: 0;
+	bottom: 0;
+	left: -5px;
+	width: 10px;
+	position: absolute;
+	cursor: ew-resize;
+}
+
+.window > .resizeTopLeftCorner {
 	position: absolute;
 	width: 14px;
 	height: 14px;
-	bottom: -4px;
-	right: -4px;
+	top: -5px;
+	left: -5px;
 	cursor: nwse-resize;
-	border-radius: 7px;
+}
+
+.window > .resizeTopRightCorner {
+	position: absolute;
+	width: 14px;
+	height: 14px;
+	top: -5px;
+	right: -5px;
+	cursor: nesw-resize;
+}
+
+.window > .resizeBottomLeftCorner {
+	position: absolute;
+	width: 14px;
+	height: 14px;
+	bottom: -5px;
+	left: -5px;
+	cursor: nesw-resize;
+}
+
+.window > .resizeBottomRightCorner {
+	position: absolute;
+	width: 14px;
+	height: 14px;
+	bottom: -5px;
+	right: -5px;
+	cursor: nwse-resize;
 }
 
 .closeButton {
@@ -87,6 +149,7 @@ body {
 	margin: 0;
 	list-style: none;
 	padding: 0;
+	display: -webkit-flex;
 	display: flex;
 }
 
@@ -313,16 +376,74 @@ function Window() {
 		titleBar: document.createElement('div'),
 		closeButton: document.createElement('button'),
 		iframe: document.createElement('iframe'),
-		resizeThumb: document.createElement('div')
 	};
 	this.el.classList.add('window');
 	this.els.titleBar.classList.add('titleBar');
 	this.els.closeButton.classList.add('closeButton');
-	this.els.resizeThumb.classList.add('resizeThumb');
 	this.els.titleBar.appendChild(this.els.closeButton);
 	this.el.appendChild(this.els.titleBar);
 	this.el.appendChild(this.els.iframe);
-	this.el.appendChild(this.els.resizeThumb);
+
+	[
+		{ x:  0, y: -1, n: 'Top' },
+		{ x:  1, y:  0, n: 'Right' },
+		{ x:  0, y:  1, n: 'Bottom' },
+		{ x: -1, y:  0, n: 'Left' },
+		{ x: -1, y: -1, n: 'TopLeftCorner' },
+		{ x:  1, y: -1, n: 'TopRightCorner' },
+		{ x:  1, y:  1, n: 'BottomRightCorner' },
+		{ x: -1, y:  1, n: 'BottomLeftCorner' }
+	].forEach(function(spec){
+		var name = 'resize' + spec.n;
+		var el = document.createElement('div');
+		this.els[name] = el;
+		el.classList.add(name);
+		this.el.appendChild(el);
+
+		el.addEventListener('mousedown', function(e) {
+			if (e.button != 0) { return; }
+			e.preventDefault();
+			this.orderFront();
+
+			var af, lastX, lastY;
+			var startTrack = { x: e.pageX, y: e.pageY };
+			var startPosition = this.position;
+			var startSize = this.size;
+
+			var draw = function() {
+				if (spec.x === -1 || spec.y === -1) {
+					this.setPosition(
+						startPosition.x + (lastX - startTrack.x) * (spec.x === -1 ? 1 : 0),
+						startPosition.y + (lastY - startTrack.y) * (spec.y === -1 ? 1 : 0)
+					);
+				}
+				this.setSize(
+					startSize.width + (lastX - startTrack.x) * spec.x,
+					startSize.height + (lastY - startTrack.y) * spec.y
+				);
+				af = null;
+			}.bind(this);
+
+			var trackResize = function(e) {
+				lastX = e.pageX;
+				lastY = e.pageY;
+				if (!af) {
+					af = requestAnimationFrame(draw);
+				}
+			}.bind(this);
+
+			window.addEventListener('mousemove', trackResize);
+			window.addEventListener('mouseup', function f(e) {
+				window.removeEventListener('mousemove', trackResize);
+				window.removeEventListener('mouseup', f);
+				screenCover.hide();
+			}.bind(this));
+
+			screenCover.show();
+			trackResize(e);
+		}.bind(this));
+
+	}.bind(this));
 
 	this.els.closeButton.addEventListener('click', function() {
 		this.windowManager.removeWindow(this);
@@ -331,11 +452,6 @@ function Window() {
 	this.dragListener = this.trackDrag.bind(this);
 	this.dragMouseupListener = function(e) {
 		this.dragging = false;
-	}.bind(this);
-
-	this.resizeListener = this.trackResize.bind(this);
-	this.resizeMouseupListener = function(e) {
-		this.resizing = false;
 	}.bind(this);
 
 	this.els.titleBar.addEventListener('mousedown', function(e) {
@@ -351,28 +467,12 @@ function Window() {
 		this.trackDrag(e);
 	}.bind(this));
 
-	this.els.resizeThumb.addEventListener('mousedown', function(e) {
-		if (e.button != 0) { return; }
-		e.preventDefault();
-		this.orderFront();
-		this.resizing = true;
-		this.trackOffset = {
-			x: e.pageX - (this.position.x + this.size.width),
-			y: e.pageY - (this.position.y + this.size.height)
-		};
-		this.trackResize(e);
-	}.bind(this));
-
 	this.drawTracking = function(){
 		this.setPosition(this.trackX, this.trackY);
 		this.trackAF = null;
 	}.bind(this);
 
-	this.drawResizing = function(){
-		this.setSize(this.trackWidth, this.trackHeight);
-		this.trackAF = null;
-	}.bind(this);
-
+	this.minSize = { width: 100, height: 100 };
 	// TODO: cascade
 	this.setPosition(50, 50);
 	this.setSize(600, 500);
@@ -396,42 +496,24 @@ Window.prototype = {
 		}
 		this._dragging = val;
 	},
-	get resizing() { return this._resizing; },
-	set resizing(val) {
-		if (val && !this._resizing) {
-			window.addEventListener('mousemove', this.resizeListener);
-			window.addEventListener('mouseup', this.resizeMouseupListener);
-			screenCover.show();
-		} else if (!val && this._resizing) {
-			window.removeEventListener('mousemove', this.resizeListener);
-			window.removeEventListener('mouseup', this.resizeMouseupListener);
-			delete this.trackAF;
-			delete this.trackOffset;
-			screenCover.hide();
-		}
-		this._resizing = val;
-	},
 	setPosition: function(x, y) {
 		this.position = { x: x, y: y };
+		this.el.style.webkitTransform = 'translate3d(' + x + 'px,' + y + 'px, 0)';
 		this.el.style.transform = 'translate3d(' + x + 'px,' + y + 'px, 0)';
 	},
 	setSize: function(width, height) {
-		this.size = { width: width, height: height };
-		this.el.style.width = width + 'px';
-		this.el.style.height = height + 'px';
+		this.size = {
+			width: Math.max(this.minSize.width, width),
+			height: Math.max(this.minSize.height, height)
+		};
+		this.el.style.width = this.size.width + 'px';
+		this.el.style.height = this.size.height + 'px';
 	},
 	trackDrag: function(e) {
 		this.trackX = e.pageX - this.trackOffset.x;
 		this.trackY = e.pageY - this.trackOffset.y;
 		if (!this.trackAF) {
 			this.trackAF = requestAnimationFrame(this.drawTracking);
-		}
-	},
-	trackResize: function(e) {
-		this.trackWidth = e.pageX - this.position.x - this.trackOffset.x;
-		this.trackHeight = e.pageY - this.position.y - this.trackOffset.y;
-		if (!this.trackAF) {
-			this.trackAF = requestAnimationFrame(this.drawResizing);
 		}
 	},
 	orderFront: function() {
